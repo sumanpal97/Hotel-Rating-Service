@@ -5,8 +5,12 @@ import com.ms.user.service.entities.Rating;
 import com.ms.user.service.entities.User;
 import com.ms.user.service.exceptions.ResourceNotFoundException;
 import com.ms.user.service.externalGateway.HotelServiceClient;
+import com.ms.user.service.payload.Notification;
+import com.ms.user.service.payload.UserDTO;
+import com.ms.user.service.producer.KafkaProducer;
 import com.ms.user.service.repositories.UserRepository;
 import com.ms.user.service.services.UserService;
+import lombok.extern.slf4j.Slf4j;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,6 +23,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
+@Slf4j
 public class UserServiceImpl implements UserService {
 
     @Autowired
@@ -29,14 +34,39 @@ public class UserServiceImpl implements UserService {
     @Autowired
     private HotelServiceClient hotelServiceClient;
 
-    private Logger logger = LoggerFactory.getLogger(UserService.class);
+    @Autowired
+    private KafkaProducer kafkaProducer;
     @Override
     public User saveUser(User user) {
+        log.info("Entering into UserServiceImpl : saveUser");
+
         //generate unique userId
         String ranmdomUserId = UUID.randomUUID().toString();
         user.setUserId(ranmdomUserId);
         User savedUser = userRepository.save(user);
+
+        log.info("Async Call for Producing Notification : {}",user);
+        Notification notification = convert(savedUser);
+        kafkaProducer.sendMessage(notification);
+
+        log.info("Exiting from UserServiceImpl : saveUser");
         return savedUser;
+    }
+
+    private Notification convert(User user) {
+        Notification notification = new Notification();
+        notification.setMessage("User Has Been Created");
+        notification.setStatus("OK");
+
+        UserDTO userDTO = new UserDTO();
+        userDTO.setUserId(user.getUserId());
+        userDTO.setName(user.getName());
+        userDTO.setAbout(user.getAbout());
+        userDTO.setEmail(user.getEmail());
+
+        notification.setUser(userDTO);
+
+        return notification;
     }
 
     @Override
@@ -63,7 +93,7 @@ public class UserServiceImpl implements UserService {
 
         Rating[] userRatingArr = restTemplate.getForObject(ratingServiceUrl, Rating[].class);
         List<Rating> userRatingList = Arrays.stream(userRatingArr).collect(Collectors.toList());
-        logger.info("User Rating List : {}",userRatingList);
+        log.info("User Rating List : {}",userRatingList);
 
         List<Rating> ratingList = userRatingList.stream().map(
                 rating -> {
@@ -74,7 +104,7 @@ public class UserServiceImpl implements UserService {
 //                    Hotel hotel = restTemplate.getForObject(hotelServiceUrl , Hotel.class);
                     //USING FEIGN CLIENT
                     Hotel hotel = hotelServiceClient.getHotel(hotelId);
-                    logger.info("Hotel : {}", hotel);
+                    log.info("Hotel : {}", hotel);
                     rating.setHotel(hotel);
                     return rating;
                 }
